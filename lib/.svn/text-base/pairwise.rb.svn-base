@@ -1,0 +1,145 @@
+module Pairwise
+  class << self
+    include LibXML
+
+    NUM_ITEMS = 2
+
+    attr_reader :auth, :host, :protocol
+
+    # ==== Options (options)
+    # :host<String>:: The pairwise server
+    # :user<String>:: The pairwise user
+    # :pass<String>:: The pairwise password for user
+    def servers(options)
+      @auth = Base64.b64encode("#{options[:user]}:#{options[:pass]}")
+      @host = options[:host]
+      @protocol = options[:protocol]
+    end
+
+    # data is a single question string or an array of question strings
+    def question(data)
+      # create XML to POST
+      xml = xml_root("questions")
+
+      arrayed(data).each do |name|
+        xml.root << (XML::Node.new("question") << name)
+      end
+
+      # Send XML and process response
+      send_and_process('questions/add', 'questions/question', xml)
+    end
+
+    # data is a single item data string or an array of item data strings
+    # question_ids is an array of integers representing the external ids of the questions
+    def item(data, question_ids)
+      # create XML to POST
+      xml = xml_root("items")
+
+      questions = question_ids.inject(XML::Node.new("questions")) do |doc, id|
+        question = XML::Node.new("question")
+        question["id"] = id.to_s
+        doc << question
+      end
+
+      arrayed(data).each do |name|
+        xml.root << (XML::Node.new("item") << (XML::Node.new("data") << name) << questions.copy(true))
+      end
+
+      # send XML and process response
+      send_and_process('items/add', 'items/item', xml)
+    end
+
+    def update_item_state(item_id, state)
+      send_pairwise_request("items/#{item_id}/#{state ? 'activate' : 'suspend'}", nil, 'Put')
+    end
+
+    # features is a hash of name=>value pairs for the voter's features
+    def voter(features)
+      xml =  arrayed(features).inject(xml_root("voters").root) do |voters, hash|
+        voter = XML::Node.new("voter")
+        features = XML::Node.new("features")
+        hash.each do |name, value|
+          feature = XML::Node.new("feature") << value
+          feature["name"] = name.to_s
+          features << feature
+        end
+        voters << (voter << features)
+      end
+      send_and_process('voters/add', 'voters/voter', xml)
+    end
+
+    def update_voter_state(voter_id, name, value)
+      send_and_process("voters/set/#{voter_id}?#{name}=#{value}", 'voter')
+    end
+
+    # new prompt for question and voter, n is batch number
+    def prompt(question_id, voter_id, n = 1, item_ids = nil)
+      res = "prompts/create/#{question_id}/#{voter_id}/#{n}"
+      res += "/#{item_ids}" unless (item_ids.to_s.empty? || item_ids.to_i < 1)
+      # send XML
+      res = send_pairwise_request(res, nil, 'Put')
+
+      # process response
+      if res
+        prompt_ids = fetch_xml_attr('prompts/prompt', res)
+        item_ids = fetch_xml_attr('prompts/prompt/items/item', res)
+        [prompt_ids, prompt_ids.map { |id| [item_ids.slice!(0, NUM_ITEMS)] }]
+      end
+    end
+
+    def vote(prompt_id, item_id, voter_id, response_time = 0)
+      send_and_process("votes/add/#{prompt_id}/#{voter_id}/#{response_time}#{item_id ? "/#{item_id}" : "?skip=1"}", 'vote')
+    end
+
+    def list(method, question_id = nil, rank_algorithm_id = nil)
+      case method
+      when :item
+        res = send_pairwise_request("items/list/#{question_id.to_i}/#{rank_algorithm_id.to_i}")
+        fetch_xml_attr('items/item', res).zip(fetch_xml_attr('items/item', res, 'rank')) if res
+      end
+    end
+
+private
+    def send_and_process(path, res_path, xml = nil)
+      # send XML
+      res = send_pairwise_request(path, xml)
+
+      # process response
+      fetch_xml_attr(res_path, res) if res
+    end
+
+    # path is the path to request
+    # xml is the xml to send or nil
+    # If xml is nil send get request to path otherwise send post xml to path
+    def send_pairwise_request(path, xml = nil, method = nil)
+      url = URI.parse("#{protocol}://#{host}/#{path}")
+      headers = {
+        'Content-Type' => 'text/xml',
+        'Authorization' => "Basic #{auth}"
+      }
+      res = Net::HTTP.new(url.host, url.port)
+      res.use_ssl = true if url.port == Net::HTTP.https_default_port
+      # if xml is nil assum GET, otherwise POST
+      res = res.request(('Net::HTTP::' + (method || xml.nil? ? 'Get' : 'Post')).constantize.new(url.request_uri, headers), xml && xml.to_s)
+      res.is_a?(Net::HTTPSuccess) ? res : nil
+    end
+
+    # path is the path to search
+    # res is an HTTP response
+    # attribute is the attribute to return for each element in the search path
+    def fetch_xml_attr(path, xml, attribute = "id")
+      XML::Parser.parse(xml.body, "/pairwise/#{path}", attribute)
+    end
+
+    # wrap in array if not an array
+    def arrayed(object)
+      (object.is_a?(Array) ? object : [object])
+    end
+
+    def xml_root(string)
+      xml = XML::Document.new
+      xml.root = XML::Node.new(string)
+      xml
+    end
+  end
+end
