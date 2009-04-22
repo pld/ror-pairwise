@@ -4,7 +4,7 @@ Library to connect to the Pairwise API version 0.2.0.  Defines the Pairwise clas
 
 To configure your connection to the pairwise web service pass a hash of options to Pairwise.servers as below.
 
-== Examples
+==== Examples
 
 
 <em>Configure pairwise server:</em>
