@@ -113,7 +113,13 @@ class PairwiseTest < Test::Unit::TestCase
   def test_should_list_items_without_question_without_rank_algo
     qs = create_questions
     is = create_items(qs, true)
-    r = Pairwise.list(:item)
+    r = Pairwise.list_items
+    assert !r.empty?
+  end
+
+  def test_should_list_questions
+    qs = create_questions
+    r = Pairwise.list_questions
     assert !r.empty?
   end
 
