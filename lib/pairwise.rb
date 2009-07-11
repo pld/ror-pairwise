@@ -65,7 +65,9 @@ module Pairwise
     # data:: a single item data string or an array of item data strings.
     # question_ids:: an array of integers representing the external IDs of the questions the item is to be added to.
     # tracking:: data to store with the item.
-    def item(data, question_ids, tracking = nil)
+    # active:: if exists it's are activate
+    # voter_id:: if exists voter id is passed to pairwise.
+    def item(data, question_ids, tracking = nil, active = nil, voter_id = nil)
       xml = xml_root("items")
 
       questions = question_ids.inject(XML::Node.new("questions")) do |doc, id|
@@ -77,8 +79,7 @@ module Pairwise
       arrayed(data).each do |name|
         xml.root << (XML::Node.new("item") << (XML::Node.new("data") << name) << questions.copy(true))
       end
-      path = 'items/add'
-      path += "?tracking=#{tracking}" if tracking
+      path = 'items/add' + query_string(['tracking', 'active', 'voter_id'].zip([tracking, active, voter_id]))
       send_and_process(path, 'items/item', xml)
     end
 
@@ -96,10 +97,10 @@ module Pairwise
     # Create voters with given features.  Each can pass a single hash of features
     # to create a single voter or an array of hashes to create multiple voters.
     # ==== Return
-    # On sucess returns the voter external IDs.
+    # On sucess returns the voter external ID.
     # ==== Parameters
     # features:: a hash of name to value pairs for the voter's features.
-    def voter(features)
+    def voter(features = {})
       xml =  arrayed(features).inject(xml_root("voters").root) do |voters, hash|
         voter = XML::Node.new("voter")
         features = XML::Node.new("features")
@@ -200,8 +201,10 @@ module Pairwise
     # question_id:: the question external ID of the question's items to
     # restrict the list to or nil for all questions, default nil.
     # rank_algorithm_id:: the rank algorithm to user in listing, default nil.
-    def list_items(question_id = nil, rank_algorithm_id = nil, data = nil)
+    # limit:: the number of items to return.
+    def list_items(question_id = nil, rank_algorithm_id = nil, data = nil, limit = nil)
       path = "items/list/#{question_id.to_i}/#{rank_algorithm_id.to_i}"
+      path += "/#{limit}" unless limit.nil?
       path += "?data=1" unless data.nil?
       res = send_pairwise_request(path)
       if res
@@ -215,6 +218,7 @@ module Pairwise
           fetch_xml_attr('items/item', res, 'added'),
           fetch_xml_attr('items/item', res, 'ratings'),
           fetch_xml_attr('items/item', res, 'skips'),
+          fetch_xml_attr('items/item', res, 'score'),
         ].transpose
       end
     end
@@ -269,7 +273,8 @@ module Pairwise
           id,
           XML::Parser.content(res.body, 'question').first,
           fetch_xml_attr('question', res, 'items').first,
-          fetch_xml_attr('question', res, 'votes').first
+          fetch_xml_attr('question', res, 'votes').first,
+          fetch_xml_attr('question', res, 'active_and_inactive_items').first,
         ]
       end
     end
@@ -280,8 +285,10 @@ module Pairwise
     # skips.
     # ==== Parameters
     # id:: the item ID
-    def get_item(id)
-      res = send_pairwise_request("items/#{id}")
+    def get_item(id, rank_algorithm = nil)
+      path = "items/#{id}"
+      path += "?rank_algorithm=#{rank_algorithm}" if rank_algorithm
+      res = send_pairwise_request(path)
       if res
         [
           id,
@@ -290,9 +297,7 @@ module Pairwise
           fetch_xml_attr('item/questions/question', res, 'rank').first,
           fetch_xml_attr('item/questions/question', res, 'wins').first,
           fetch_xml_attr('item/questions/question', res, 'losses').first,
-          fetch_xml_attr('items/item', res, 'added'),
-          fetch_xml_attr('items/item', res, 'ratings'),
-          fetch_xml_attr('items/item', res, 'skips')
+          fetch_xml_attr('item/questions/question', res, 'score').first,
         ]
       end
     end
@@ -307,7 +312,7 @@ module Pairwise
       if res
         [
           id,
-          fetch_xml_attr('item/question', res).first,
+          fetch_xml_attr('prompt/question', res).first,
           fetch_xml_attr('prompt/items/item', res)
         ]
       end
@@ -368,6 +373,14 @@ private
       xml = XML::Document.new
       xml.root = XML::Node.new(string)
       xml
+    end
+
+    def query_string(params)
+      str = params.inject('') do |str, el|
+        name, value = el
+        value ? str + "#{name}=#{value}&" : str
+      end
+      str.empty? ? str : '?' + str.chop
     end
   end
 end

@@ -29,6 +29,13 @@ class PairwiseTest < Test::Unit::TestCase
     assert p.first.to_i > 0
   end
 
+  def test_should_create_single_active_item
+    setup
+    p = Pairwise.item("data", create_questions, nil, true)
+    assert_equal p.length, 1
+    assert p.first.to_i > 0
+  end
+
   def test_should_create_many_items
     setup
     p = Pairwise.item(["data", "data2"], create_questions)
